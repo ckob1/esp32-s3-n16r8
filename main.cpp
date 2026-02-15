@@ -2,14 +2,17 @@
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
-#include "driver/i2s.h"  // ESP32内置I2S库，无第三方依赖
+#include "driver/i2s.h"
+#include <TFT_eSPI.h>  // ILI9341库
 
-// ===== 音频引脚配置（和之前的接线完全兼容，不用改线）=====
-#define I2S_DIN_PIN  17  // MAX98357A DIN → GPIO17
-#define I2S_BCLK_PIN 18  // MAX98357A BCLK → GPIO18
-#define I2S_LRC_PIN  8   // MAX98357A LRC/WS → GPIO8
+TFT_eSPI tft = TFT_eSPI();  // 屏幕对象
 
-// WiFi & AI配置（完全保留原有配置，无改动）
+// ===== 音频引脚（原样）=====
+#define I2S_DIN_PIN  17
+#define I2S_BCLK_PIN 18
+#define I2S_LRC_PIN  8
+
+// WiFi & AI
 const char* WIFI_SSID     = "OnePlus-Ace-5-m4sg";
 const char* WIFI_PWD      = "88888888";
 const char* LM_STUDIO_IP  = "192.168.45.160";
@@ -19,31 +22,28 @@ const char* LM_MODEL_NAME = "qwen/qwen3-v1-30b";
 String aiResponse = "";
 bool psramAvailable = false;
 
-// ===== 内置I2S音频工具：播放提示音 =====
+// ===== 蜂鸣播放 =====
 void playBeep(int frequency, int durationMs) {
   const int sampleRate = 16000;
   const int amplitude = 8000;
   int samples = sampleRate * durationMs / 1000;
   int16_t* buffer = (int16_t*)malloc(samples * sizeof(int16_t));
 
-  // 生成正弦波
   for (int i = 0; i < samples; i++) {
     float angle = 2 * PI * frequency * i / sampleRate;
     buffer[i] = (int16_t)(amplitude * sin(angle));
   }
 
-  // 播放音频
   size_t bytesWritten;
   i2s_write(I2S_NUM_0, buffer, samples * sizeof(int16_t), &bytesWritten, portMAX_DELAY);
   free(buffer);
   delay(durationMs);
 }
 
-// ===== 初始化MAX98357A（内置I2S，无第三方库）=====
+// ===== 音频初始化 =====
 void initAudioModule() {
-  Serial.println("\n========== 初始化MAX98357A音频模块 ==========");
-  
-  // I2S配置，完全匹配MAX98357A
+  Serial.println("\n初始化音频模块");
+
   i2s_config_t i2sConfig = {
     .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_TX),
     .sample_rate = 16000,
@@ -58,7 +58,6 @@ void initAudioModule() {
     .fixed_mclk = 0
   };
 
-  // 引脚绑定
   i2s_pin_config_t pinConfig = {
     .bck_io_num = I2S_BCLK_PIN,
     .ws_io_num = I2S_LRC_PIN,
@@ -66,111 +65,15 @@ void initAudioModule() {
     .data_in_num = I2S_PIN_NO_CHANGE
   };
 
-  // 初始化I2S
-  esp_err_t err = i2s_driver_install(I2S_NUM_0, &i2sConfig, 0, NULL);
-  if (err != ESP_OK) {
-    Serial.println("❌ I2S驱动安装失败");
-    return;
-  }
-  err = i2s_set_pin(I2S_NUM_0, &pinConfig);
-  if (err != ESP_OK) {
-    Serial.println("❌ I2S引脚配置失败");
-    return;
-  }
+  i2s_driver_install(I2S_NUM_0, &i2sConfig, 0, NULL);
+  i2s_set_pin(I2S_NUM_0, &pinConfig);
 
-  Serial.println("✅ MAX98357A 初始化完成");
-  // 开机测试音，接好线就能听到
+  Serial.println("音频初始化完成");
   playBeep(1500, 200);
   playBeep(2000, 200);
 }
 
-// WiFi连接（完全保留原有逻辑，加了音频提示）
-void connectWiFi() {
-  Serial.print("正在连接WiFi: ");
-  Serial.println(WIFI_SSID);
-  WiFi.begin(WIFI_SSID, WIFI_PWD);
-
-  int retryCnt = 0;
-  while (WiFi.status() != WL_CONNECTED && retryCnt < 20) {
-    delay(500);
-    Serial.print(".");
-    retryCnt++;
-  }
-
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.println("\n✅ WiFi连接成功！IP: " + WiFi.localIP().toString());
-    playBeep(2500, 300); // WiFi成功提示音
-  } else {
-    Serial.println("\n❌ WiFi连接失败");
-    playBeep(500, 1000); // 失败提示音
-    while (1) delay(1000);
-  }
-}
-
-// AI请求函数（完全保留原有逻辑，加了音频反馈）
-bool sendToLMStudio(String prompt) {
-  String apiUrl = "http://" + String(LM_STUDIO_IP) + ":" + String(LM_STUDIO_PORT) + "/v1/chat/completions";
-  HTTPClient http;
-  http.setConnectTimeout(10000);
-  http.setTimeout(60000);
-
-  if (!http.begin(apiUrl)) {
-    Serial.println("❌ HTTP初始化失败");
-    return false;
-  }
-  http.addHeader("Content-Type", "application/json");
-
-  // 利用PSRAM扩展缓冲区
-  const size_t reqBufSize = psramAvailable ? 8192 : 2048;
-  const size_t respBufSize = psramAvailable ? 16384 : 4096;
-  DynamicJsonDocument reqJson(reqBufSize);
-  DynamicJsonDocument respJson(respBufSize);
-
-  // 构建标准OpenAI格式请求体
-  reqJson["model"] = LM_MODEL_NAME;
-  reqJson["messages"][0]["role"] = "user";
-  reqJson["messages"][0]["content"] = prompt;
-  reqJson["temperature"] = 0.7;
-  reqJson["max_tokens"] = 1024;
-
-  String reqBody;
-  serializeJson(reqJson, reqBody);
-  Serial.println("\n📤 发送请求：" + prompt);
-
-  // 发送请求
-  int httpCode = http.POST(reqBody);
-  if (httpCode == HTTP_CODE_OK) {
-    String payload = http.getString();
-    DeserializationError err = deserializeJson(respJson, payload);
-    
-    if (!err) {
-      aiResponse = respJson["choices"][0]["message"]["content"].as<String>();
-      Serial.println("✅ AI回复：\n" + aiResponse);
-      
-      // AI回复成功，播放提示音+简易语音播报
-      playBeep(1800, 200);
-      // 【已修复min函数报错】统一参数类型
-      for (int i = 0; i < min((int)aiResponse.length(), 60); i++) {
-        int freq = 800 + (aiResponse[i] % 15) * 150;
-        playBeep(freq, 70);
-        delay(10);
-      }
-    } else {
-      aiResponse = "❌ JSON解析失败: " + String(err.c_str());
-      Serial.println(aiResponse);
-      playBeep(600, 500);
-    }
-  } else {
-    aiResponse = "❌ 请求失败，HTTP错误码: " + String(httpCode);
-    Serial.println(aiResponse);
-    playBeep(500, 500);
-  }
-
-  http.end();
-  return httpCode == HTTP_CODE_OK;
-}
-
-// PSRAM检测（完全保留原有逻辑）
+// ===== PSRAM检测 =====
 void checkPSRAM() {
   Serial.println("\n========== PSRAM 八线模式检测 ==========");
   Serial.println("配置：Octal SPI（8线，OPI模式）");
@@ -189,10 +92,9 @@ void checkPSRAM() {
   Serial.println(" MB");
 
   if (psramAvailable) {
-    // 大内存测试，验证八线PSRAM
     char* testBuf = (char*)ps_malloc(6 * 1024 * 1024);
     if (testBuf) {
-      Serial.println("✅ 6MB内存分配成功（八线PSRAM正常工作）");
+      Serial.println("✅ 6MB内存分配成功");
       memset(testBuf, 0xAA, 6 * 1024 * 1024);
       Serial.println("✅ 6MB写入测试通过");
       free(testBuf);
@@ -205,24 +107,154 @@ void checkPSRAM() {
   Serial.println("==========================================");
 }
 
+// ===== 屏幕显示函数（优化换行，支持完整显示AI文字） =====
+void displayText(String title, String content) {
+  tft.fillScreen(TFT_BLACK);
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  tft.setTextSize(2);
+  tft.setCursor(10, 10);
+  tft.println(title);
+
+  tft.setTextSize(1);  // 小字体，每字符约8像素宽，240宽屏幕约30字符/行
+  tft.setCursor(10, 40);  // 从标题下开始，留间距
+
+  int pos = 0;
+  int lineHeight = 10;  // 每行高度（字体高度+间距）
+  int maxLines = (tft.height() - 50) / lineHeight;  // 计算最大行数
+
+  int lineCount = 0;
+  while (pos < content.length() && lineCount < maxLines) {
+    // 每行最多30字符，避免溢出
+    int endPos = min(pos + 30, (int)content.length());
+    // 智能换行：找空格或标点，避免切断单词
+    while (endPos > pos && content[endPos - 1] != ' ' && content[endPos - 1] != ',' && content[endPos - 1] != '.') {
+      endPos--;
+    }
+    if (endPos == pos) endPos = min(pos + 30, (int)content.length());  // 如果无空格，强制切
+
+    String line = content.substring(pos, endPos);
+    tft.println(line);
+    pos = endPos;
+    while (pos < content.length() && content[pos] == ' ') pos++;  // 跳过空格
+    lineCount++;
+  }
+
+  if (pos < content.length()) {
+    // 如果内容太长，显示提示
+    tft.setCursor(10, tft.getCursorY() + 10);
+    tft.setTextColor(TFT_YELLOW);
+    tft.println("... (内容过长，查看串口完整回复)");
+    Serial.println("屏幕显示不全，完整AI回复：" + content);
+  }
+}
+
+// ===== AI请求 =====
+bool sendToLMStudio(String prompt) {
+  String apiUrl = "http://" + String(LM_STUDIO_IP) + ":" + String(LM_STUDIO_PORT) + "/v1/chat/completions";
+  HTTPClient http;
+  http.setConnectTimeout(10000);
+  http.setTimeout(60000);
+
+  if (!http.begin(apiUrl)) {
+    Serial.println("HTTP初始化失败");
+    return false;
+  }
+  http.addHeader("Content-Type", "application/json");
+
+  const size_t bufSize = psramAvailable ? 16384 : 4096;
+  JsonDocument reqJson;
+  JsonDocument respJson;
+
+  reqJson["model"] = LM_MODEL_NAME;
+  reqJson["messages"][0]["role"] = "user";
+  reqJson["messages"][0]["content"] = prompt;
+  reqJson["temperature"] = 0.7;
+  reqJson["max_tokens"] = 1024;
+
+  String reqBody;
+  serializeJson(reqJson, reqBody);
+  Serial.println("\n📤 发送请求：" + prompt);
+
+  int httpCode = http.POST(reqBody);
+  if (httpCode == HTTP_CODE_OK) {
+    String payload = http.getString();
+    DeserializationError err = deserializeJson(respJson, payload);
+    if (!err) {
+      aiResponse = respJson["choices"][0]["message"]["content"].as<String>();
+      Serial.println("✅ AI回复：\n" + aiResponse);
+      displayText("输入: " + prompt, aiResponse);  // 屏幕显示优化后函数
+      playBeep(1800, 200);
+      return true;
+    } else {
+      Serial.println("JSON解析失败: " + String(err.c_str()));
+    }
+  } else {
+    Serial.println("请求失败，HTTP码: " + String(httpCode));
+  }
+  http.end();
+  displayText("错误", "请求失败 " + String(httpCode));
+  playBeep(500, 500);
+  return false;
+}
+
+// WiFi连接
+void connectWiFi() {
+  Serial.print("正在连接WiFi: ");
+  Serial.println(WIFI_SSID);
+  WiFi.begin(WIFI_SSID, WIFI_PWD);
+
+  int retryCnt = 0;
+  while (WiFi.status() != WL_CONNECTED && retryCnt < 20) {
+    delay(500);
+    Serial.print(".");
+    retryCnt++;
+  }
+
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println("\n✅ WiFi连接成功！IP: " + WiFi.localIP().toString());
+    displayText("WiFi", "连接成功\nIP: " + WiFi.localIP().toString());
+    playBeep(2500, 300);
+  } else {
+    Serial.println("\n❌ WiFi连接失败");
+    displayText("WiFi", "连接失败");
+    playBeep(500, 1000);
+  }
+}
+
 void setup() {
   Serial.begin(115200);
   delay(1000);
   Serial.println("=====================================");
-  Serial.println("    ESP32-S3 AI助手（无依赖音频版）    ");
+  Serial.println("    ESP32-S3 AI助手（屏幕版）    ");
   Serial.println("=====================================");
-  Serial.print("Flash容量：");
-  Serial.print(ESP.getFlashChipSize() / 1024 / 1024);
-  Serial.println(" MB");
-  
-  initAudioModule();  // 优先初始化音频
+
+  tft.init();
+  tft.invertDisplay(false);  // false或true，如果颜色反转改true
+
+  // 扩展测试：试多个rotation，找到正确的固定它
+  for (int rot = 0; rot < 4; rot++) {
+    tft.setRotation(rot);
+    tft.fillScreen(TFT_RED);  // 红色填充验证
+    delay(1000);
+    tft.fillScreen(TFT_BLACK);
+    tft.setTextColor(TFT_GREEN, TFT_BLACK);
+    tft.setTextSize(2);
+    tft.setCursor(10, 10);
+    tft.println("Test OK! Rot: " + String(rot));
+    delay(3000);  // 观察3秒
+  }
+
+  // 测试后固定一个rotation（根据观察改此值，例如3）
+  tft.setRotation(1);  // 替换为测试中正确的rot值
+
+  initAudioModule();
   checkPSRAM();
   connectWiFi();
-  sendToLMStudio("你好，用一句话介绍下自己");
+
+  sendToLMStudio("你好，用一句话介绍下自己");  // 开机测试
 }
 
 void loop() {
-  // 串口输入交互
   if (Serial.available() > 0) {
     String input = Serial.readStringUntil('\n');
     input.trim();
