@@ -44,3 +44,6 @@ bool   llm_current_provider_ready();
 
 // 同步请求: 发送 prompt, 等待完整回复
 LLMResult llm_chat(const String& userPrompt);
+
+// 带最近对话上下文的同步请求
+LLMResult llm_chat_with_context(const String& userPrompt, const String& context);

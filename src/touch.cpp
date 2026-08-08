@@ -69,8 +69,8 @@ static uint16_t xpt_read_avg(uint8_t cmd, int n = 3) {
 }
 
 void touch_init() {
-    DBG_PRINTLN("[Touch] 初始化 XPT2046 (独立 HSPI, 自写驱动)...");
-    DBG_PRINTLN("[Touch] 引脚: CS=" + String(TOUCH_CS_PIN) +
+    DBG_PRINTLN("[Touch] init XPT2046 (HSPI)...");
+    DBG_PRINTLN("[Touch] pins: CS=" + String(TOUCH_CS_PIN) +
                 " IRQ=" + String(TOUCH_IRQ_PIN) +
                 " SCK=" + String(TOUCH_SCK_PIN) +
                 " MOSI=" + String(TOUCH_MOSI_PIN) +
@@ -88,21 +88,29 @@ void touch_init() {
 
     // 自检: 读一次 Z1, 看是否返回合理值 (无触摸时 Z1 通常为 0 或很小)
     uint16_t z = xpt_read(XPT_CMD_Z1);
-    DBG_PRINTLN("[Touch] 自检 Z1=" + String(z) + " (无触摸时应接近 0)");
-    DBG_PRINTLN("[Touch] ✅ 初始化完成");
+    DBG_PRINTLN("[Touch] self test Z1=" + String(z) + " (idle ~0)");
+    DBG_PRINTLN("[Touch] init done");
 }
 
 // 把原始 ADC 值映射到屏幕像素 (用 g_touchCalib 动态校准值)
 static void raw_to_screen(uint16_t rx, uint16_t ry, int& sx, int& sy) {
     long x, y;
 
+    // 防御: 校准值异常 (xMin==xMax) 时 map() 会除零, 强制一个安全差值
+    int calXMin = g_touchCalib.xMin;
+    int calXMax = g_touchCalib.xMax;
+    int calYMin = g_touchCalib.yMin;
+    int calYMax = g_touchCalib.yMax;
+    if (calXMax <= calXMin) calXMax = calXMin + 1;
+    if (calYMax <= calYMin) calYMax = calYMin + 1;
+
     if (g_touchCalib.swapXY) {
         // raw_y 对应屏幕 X, raw_x 对应屏幕 Y
-        x = map(ry, g_touchCalib.xMin, g_touchCalib.xMax, 0, tft.width());
-        y = map(rx, g_touchCalib.yMin, g_touchCalib.yMax, 0, tft.height());
+        x = map(ry, calXMin, calXMax, 0, tft.width());
+        y = map(rx, calYMin, calYMax, 0, tft.height());
     } else {
-        x = map(rx, g_touchCalib.xMin, g_touchCalib.xMax, 0, tft.width());
-        y = map(ry, g_touchCalib.yMin, g_touchCalib.yMax, 0, tft.height());
+        x = map(rx, calXMin, calXMax, 0, tft.width());
+        y = map(ry, calYMin, calYMax, 0, tft.height());
     }
 
     if (g_touchCalib.invertX) x = tft.width()  - x;

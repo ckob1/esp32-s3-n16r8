@@ -6,6 +6,7 @@
  */
 #include "llm.h"
 #include "wifi_utils.h"
+#include "cert_bundle.h"
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <ArduinoJson.h>
@@ -33,7 +34,7 @@ int llm_get_provider_idx() {
 bool llm_set_provider(int idx) {
     if (idx < 0 || idx >= LLM_PROVIDER_COUNT) return false;
     currentProviderIdx = idx;
-    DBG_PRINTLN("[LLM] 切换供应商: " + providers[idx].name +
+    DBG_PRINTLN("[LLM] switch provider: " + providers[idx].name +
                 " (model=" + providers[idx].model + ")");
     return true;
 }
@@ -41,6 +42,7 @@ bool llm_set_provider(int idx) {
 bool llm_set_provider_by_name(const String& name) {
     String n = name;
     n.toLowerCase();
+    if (n.length() == 0) return false;
     for (int i = 0; i < LLM_PROVIDER_COUNT; i++) {
         String pn = providers[i].name;
         pn.toLowerCase();
@@ -146,7 +148,10 @@ static String read_http_response(WiFiClientSecure& client, int& httpCode) {
                     int want = min((long)sizeof(buf), left);
                     int got = client.read(buf, want);
                     if (got > 0) {
-                        payload += String((char*)buf, got);
+                        if (payload.length() < LLM_MAX_RESPONSE_BYTES) {
+                            size_t room = LLM_MAX_RESPONSE_BYTES - payload.length();
+                            payload += String((char*)buf, got > room ? room : got);
+                        }
                         left -= got;
                     }
                 } else {
@@ -161,7 +166,7 @@ static String read_http_response(WiFiClientSecure& client, int& httpCode) {
         while (payload.length() < (unsigned)contentLength) {
             if (client.available() > 0) {
                 int c = client.read();
-                if (c >= 0) payload += (char)c;
+                if (c >= 0 && payload.length() < LLM_MAX_RESPONSE_BYTES) payload += (char)c;
             } else {
                 if (millis() > deadline ||
                     (!client.connected() && client.available() == 0)) {
@@ -174,7 +179,7 @@ static String read_http_response(WiFiClientSecure& client, int& httpCode) {
         while (client.connected() || client.available() > 0) {
             if (client.available() > 0) {
                 int c = client.read();
-                if (c >= 0) payload += (char)c;
+                if (c >= 0 && payload.length() < LLM_MAX_RESPONSE_BYTES) payload += (char)c;
             } else {
                 if (millis() > deadline) break;
                 delay(2);
@@ -237,7 +242,7 @@ LLMResult llm_chat(const String& userPrompt) {
     DBG_PRINTLN("[LLM] resolve " + host + " -> " + ip.toString());
 
     WiFiClientSecure client;
-    client.setInsecure();
+    client.setCACertBundle(x509_crt_bundle);
     client.setTimeout(LLM_TIMEOUT_MS / 1000);
     client.setHandshakeTimeout(15000);
 
@@ -270,12 +275,6 @@ LLMResult llm_chat(const String& userPrompt) {
     }
 
     DBG_PRINTLN("[LLM] resp length: " + String(payload.length()));
-
-    // 若响应过大 (无 PSRAM 时 ESP32 内存吃紧), 截断到 8KB 防止 JSON 解析失败
-    if (payload.length() > 8192 && !psramFound()) {
-        DBG_PRINTLN("[LLM] WARN: response truncated to 8KB (no PSRAM)");
-        payload = payload.substring(0, 8192);
-    }
 
     JsonDocument resp;
     DeserializationError err = deserializeJson(resp, payload);
@@ -311,4 +310,12 @@ LLMResult llm_chat(const String& userPrompt) {
 
     DBG_PRINTLN("[LLM] ✅ reply length: " + String(r.content.length()));
     return r;
+}
+
+LLMResult llm_chat_with_context(const String& userPrompt, const String& context) {
+    String prompt = userPrompt;
+    if (context.length() > 0) {
+        prompt = "Previous conversation:\n" + context + "\n\nUser: " + userPrompt;
+    }
+    return llm_chat(prompt);
 }

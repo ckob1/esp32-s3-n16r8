@@ -14,6 +14,11 @@ TouchCalib g_touchCalib;
 
 static const char* NVS_NAMESPACE = "touch_calib";
 
+static bool calib_params_valid(int xMin, int xMax, int yMin, int yMax) {
+    return xMin >= 0 && xMax <= 4095 && yMin >= 0 && yMax <= 4095 &&
+           xMax > xMin && yMax > yMin;
+}
+
 void touch_calib_load() {
     Preferences prefs;
     bool opened = prefs.begin(NVS_NAMESPACE, false);   // 读写模式, 首次自动建命名空间
@@ -42,32 +47,53 @@ void touch_calib_load() {
         g_touchCalib.invertX = TOUCH_INVERT_X;
         g_touchCalib.invertY = TOUCH_INVERT_Y;
         g_touchCalib.valid = false;
-        DBG_PRINTLN("[TouchCalib] 旧校准版本已忽略, 请重新校准");
+        DBG_PRINTLN("[TouchCalib] old calibration ignored, please recalibrate");
         return;
     }
 
-    g_touchCalib.xMin    = prefs.getInt("xMin",    TOUCH_X_MIN);
-    g_touchCalib.xMax    = prefs.getInt("xMax",    TOUCH_X_MAX);
-    g_touchCalib.yMin    = prefs.getInt("yMin",    TOUCH_Y_MIN);
-    g_touchCalib.yMax    = prefs.getInt("yMax",    TOUCH_Y_MAX);
-    g_touchCalib.swapXY  = prefs.getBool("swapXY", TOUCH_SWAP_XY);
-    g_touchCalib.invertX = prefs.getBool("invertX", TOUCH_INVERT_X);
-    g_touchCalib.invertY = prefs.getBool("invertY", TOUCH_INVERT_Y);
-    g_touchCalib.valid   = prefs.getBool("valid",   false);
-
+    int xMin = prefs.getInt("xMin", TOUCH_X_MIN);
+    int xMax = prefs.getInt("xMax", TOUCH_X_MAX);
+    int yMin = prefs.getInt("yMin", TOUCH_Y_MIN);
+    int yMax = prefs.getInt("yMax", TOUCH_Y_MAX);
+    bool swapXY  = prefs.getBool("swapXY", TOUCH_SWAP_XY);
+    bool invertX = prefs.getBool("invertX", TOUCH_INVERT_X);
+    bool invertY = prefs.getBool("invertY", TOUCH_INVERT_Y);
+    bool valid   = prefs.getBool("valid",   false);
     prefs.end();
 
-    DBG_PRINTLN("[TouchCalib] 加载:");
+    if (!calib_params_valid(xMin, xMax, yMin, yMax)) {
+        // NVS 损坏/异常值会导致 map() 除零崩溃, 回退到 config.h 默认值
+        DBG_PRINTLN("[TouchCalib] invalid stored range, using config.h defaults");
+        xMin = TOUCH_X_MIN; xMax = TOUCH_X_MAX;
+        yMin = TOUCH_Y_MIN; yMax = TOUCH_Y_MAX;
+        valid = false;
+    }
+
+    g_touchCalib.xMin    = xMin;
+    g_touchCalib.xMax    = xMax;
+    g_touchCalib.yMin    = yMin;
+    g_touchCalib.yMax    = yMax;
+    g_touchCalib.swapXY  = swapXY;
+    g_touchCalib.invertX = invertX;
+    g_touchCalib.invertY = invertY;
+    g_touchCalib.valid   = valid;
+
+    DBG_PRINTLN("[TouchCalib] load:");
     DBG_PRINTLN("  X: " + String(g_touchCalib.xMin) + " - " + String(g_touchCalib.xMax));
     DBG_PRINTLN("  Y: " + String(g_touchCalib.yMin) + " - " + String(g_touchCalib.yMax));
     DBG_PRINTLN("  swapXY=" + String(g_touchCalib.swapXY) +
                 " invX=" + String(g_touchCalib.invertX) +
                 " invY=" + String(g_touchCalib.invertY));
-    DBG_PRINTLN("  来源: " + String(g_touchCalib.valid ? "NVS (已校准)" : "config.h (默认)"));
+    DBG_PRINTLN("  source: " + String(g_touchCalib.valid ? "NVS" : "config.h"));
 }
 
 void touch_calib_save(int xMin, int xMax, int yMin, int yMax,
                       bool swapXY, bool invertX, bool invertY) {
+    if (!calib_params_valid(xMin, xMax, yMin, yMax)) {
+        DBG_PRINTLN("[TouchCalib] refuse to save invalid range");
+        return;
+    }
+
     Preferences prefs;
     prefs.begin(NVS_NAMESPACE, false);  // 读写模式
 
@@ -91,7 +117,7 @@ void touch_calib_save(int xMin, int xMax, int yMin, int yMax,
     g_touchCalib.invertY = invertY;
     g_touchCalib.valid = true;
 
-    DBG_PRINTLN("[TouchCalib] ✅ 已保存到 NVS");
+    DBG_PRINTLN("[TouchCalib] saved to NVS");
 }
 
 void touch_calib_reset() {
@@ -109,7 +135,7 @@ void touch_calib_reset() {
     g_touchCalib.invertY = TOUCH_INVERT_Y;
     g_touchCalib.valid = false;
 
-    DBG_PRINTLN("[TouchCalib] 已清除 NVS, 恢复 config.h 默认值");
+    DBG_PRINTLN("[TouchCalib] NVS cleared, config.h defaults restored");
 }
 
 // 等待一次有效点击, 返回 raw 坐标 (RawPoint 在 touch.h 已定义)
@@ -156,10 +182,9 @@ static void draw_target(int x, int y, int idx, const String& label) {
 }
 
 void touch_calib_run_interactive() {
-    Serial.println("\n========== 动态触摸校准 ==========");
-    Serial.println("将依次在屏幕 4 个角显示红色十字");
-    Serial.println("请用触摸笔或手指点击十字中心");
-    Serial.println("发送任意串口字符可取消\n");
+    Serial.println("\n========== Touch Calibration ==========");
+    Serial.println("Tap the center box vertices in order");
+    Serial.println("Send any serial char to cancel\n");
 
     RawPoint samples[4];
     int leftTargetX = 80;
@@ -177,11 +202,11 @@ void touch_calib_run_interactive() {
 
     for (int i = 0; i < 4; i++) {
         draw_target(screenX[i], screenY[i], i + 1, labels[i]);
-        Serial.println("等待点击: " + labels[i]);
+        Serial.println("Waiting: " + labels[i]);
 
         RawPoint p = wait_for_raw_click(30000);
         if (!p.valid) {
-            Serial.println("校准取消或超时");
+            Serial.println("Calibration cancelled or timeout");
             return;
         }
         samples[i] = p;
@@ -195,7 +220,7 @@ void touch_calib_run_interactive() {
     int tW = tft.width();
     int tH = tft.height();
 
-    Serial.println("\n=== 校准分析 ===");
+    Serial.println("\n=== Calibration Analysis ===");
     Serial.println("TL: raw(" + String(samples[0].x) + "," + String(samples[0].y) + ") screen(" + String(leftTargetX) + "," + String(topTargetY) + ")");
     Serial.println("TR: raw(" + String(samples[1].x) + "," + String(samples[1].y) + ") screen(" + String(rightTargetX) + "," + String(topTargetY) + ")");
     Serial.println("BL: raw(" + String(samples[2].x) + "," + String(samples[2].y) + ") screen(" + String(leftTargetX) + "," + String(bottomTargetY) + ")");
@@ -232,7 +257,7 @@ void touch_calib_run_interactive() {
     int yMin = min(rawAtY0, rawAtYH);
     int yMax = max(rawAtY0, rawAtYH);
 
-    Serial.println("\n=== 计算结果 ===");
+    Serial.println("\n=== Result ===");
     Serial.println("X: " + String(xMin) + " - " + String(xMax));
     Serial.println("Y: " + String(yMin) + " - " + String(yMax));
     Serial.println("swapXY=" + String(swapXY) + " invertX=" + String(invertX) + " invertY=" + String(invertY));

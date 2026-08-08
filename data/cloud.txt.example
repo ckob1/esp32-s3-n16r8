@@ -1,0 +1,8 @@
+# Cloud MP3 playlist. Copy/rename this file to data/cloud.txt, then run:
+#   pio run -t uploadfs --upload-port COM3
+#
+# One track per line: Display Name|https://direct-link/track.mp3
+# Lines without "Name|" use the last URL path segment as the display name.
+#
+# Example (replace with your own stable direct link):
+#Demo Track|https://cdn.jsdelivr.net/gh/USER/REPO@main/music/demo.mp3

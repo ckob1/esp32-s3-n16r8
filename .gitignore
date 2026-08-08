@@ -5,3 +5,10 @@ src/config.h
 .vscode/c_cpp_properties.json
 .vscode/launch.json
 .vscode/ipch
+data/cloud.txt
+data/music/*.wav
+data/music/*.WAV
+music_source/*.mp3
+music_source/*.MP3
+__pycache__/
+*.pyc

@@ -8,6 +8,81 @@ static uint32_t lastCheck = 0;
 static String savedSsid;
 static String savedPass;
 
+static const char* HISTORY_NS = "wifi_hist";
+
+void wifi_add_history(const String& ssid, const String& pass) {
+    if (ssid.length() == 0) return;
+
+    Preferences prefs;
+    if (!prefs.begin(HISTORY_NS, false)) {
+        prefs.end();
+        return;
+    }
+
+    int n = prefs.getInt("count", 0);
+    for (int i = 0; i < n; i++) {
+        String key = "ssid_" + String(i);
+        if (prefs.getString(key.c_str(), "") == ssid) {
+            String passKey = "pass_" + String(i);
+            prefs.putString(passKey.c_str(), pass);
+            prefs.end();
+            return;
+        }
+    }
+
+    if (n >= 8) {
+        for (int i = 1; i < 8; i++) {
+            String fromSsid = "ssid_" + String(i);
+            String fromPass = "pass_" + String(i);
+            String toSsid = "ssid_" + String(i - 1);
+            String toPass = "pass_" + String(i - 1);
+            prefs.putString(toSsid.c_str(), prefs.getString(fromSsid.c_str(), ""));
+            prefs.putString(toPass.c_str(), prefs.getString(fromPass.c_str(), ""));
+        }
+        n = 7;
+    }
+
+    prefs.putString(("ssid_" + String(n)).c_str(), ssid);
+    prefs.putString(("pass_" + String(n)).c_str(), pass);
+    prefs.putInt("count", n + 1);
+    prefs.end();
+}
+
+int wifi_history_count() {
+    Preferences prefs;
+    if (!prefs.begin(HISTORY_NS, false)) {
+        prefs.end();
+        return 0;
+    }
+    int n = prefs.getInt("count", 0);
+    prefs.end();
+    return n;
+}
+
+String wifi_history_ssid(int idx) {
+    Preferences prefs;
+    if (!prefs.begin(HISTORY_NS, false)) {
+        prefs.end();
+        return "";
+    }
+    String key = "ssid_" + String(idx);
+    String v = prefs.getString(key.c_str(), "");
+    prefs.end();
+    return v;
+}
+
+String wifi_history_pass(int idx) {
+    Preferences prefs;
+    if (!prefs.begin(HISTORY_NS, false)) {
+        prefs.end();
+        return "";
+    }
+    String key = "pass_" + String(idx);
+    String v = prefs.getString(key.c_str(), "");
+    prefs.end();
+    return v;
+}
+
 bool wifi_load_credentials() {
     Preferences prefs;
     if (!prefs.begin("wifi_cfg", true)) {
@@ -24,7 +99,7 @@ bool wifi_load_credentials() {
 }
 
 bool wifi_save_credentials(const String& ssid, const String& pass) {
-    if (ssid.length() == 0) return false;
+    if (ssid.length() == 0 || ssid.length() > 64 || pass.length() > 128) return false;
 
     Preferences prefs;
     if (!prefs.begin("wifi_cfg", false)) {
@@ -38,6 +113,7 @@ bool wifi_save_credentials(const String& ssid, const String& pass) {
 
     savedSsid = ssid;
     savedPass = pass;
+    wifi_add_history(ssid, pass);
     return true;
 }
 
@@ -60,7 +136,7 @@ String wifi_get_saved_ssid() {
 }
 
 String wifi_get_ssid_display() {
-    if (wifi_is_ap_mode()) return "ESP32-AI-Setup";
+    if (wifi_is_ap_mode()) return WIFI_AP_SSID;
     if (WiFi.status() == WL_CONNECTED) return WiFi.SSID();
     return savedSsid;
 }
@@ -68,8 +144,8 @@ String wifi_get_ssid_display() {
 void wifi_start_ap() {
     DBG_PRINTLN("[WiFi] Starting AP mode...");
     WiFi.mode(WIFI_AP);
-    WiFi.softAP("ESP32-AI-Setup", "12345678");
-    DBG_PRINTLN("[WiFi] AP: ESP32-AI-Setup / 12345678 @ 192.168.4.1");
+    WiFi.softAP(WIFI_AP_SSID, WIFI_AP_PASSWORD);
+    DBG_PRINTLN("[WiFi] AP: " + String(WIFI_AP_SSID) + " @ 192.168.4.1");
 }
 
 bool wifi_is_ap_mode() {
@@ -87,12 +163,12 @@ String wifi_get_ip_display() {
 // 把 WiFi.status() 转成文字, 方便调试
 static const char* wifi_status_str(wl_status_t s) {
     switch (s) {
-        case WL_NO_SHIELD:        return "NO_SHIELD (硬件未就绪)";
+        case WL_NO_SHIELD:        return "NO_SHIELD";
         case WL_IDLE_STATUS:      return "IDLE";
-        case WL_NO_SSID_AVAIL:    return "NO_SSID_AVAIL (找不到 SSID, 检查名称/2.4G)";
+        case WL_NO_SSID_AVAIL:    return "NO_SSID_AVAIL";
         case WL_SCAN_COMPLETED:   return "SCAN_COMPLETED";
         case WL_CONNECTED:        return "CONNECTED";
-        case WL_CONNECT_FAILED:   return "CONNECT_FAILED (密码错误或拒绝)";
+        case WL_CONNECT_FAILED:   return "CONNECT_FAILED";
         case WL_CONNECTION_LOST:  return "CONNECTION_LOST";
         case WL_DISCONNECTED:     return "DISCONNECTED";
         default:                  return "UNKNOWN";
@@ -115,7 +191,7 @@ static const char* wifi_auth_str(wifi_auth_mode_t a) {
 }
 
 bool wifi_connect() {
-    DBG_PRINTLN("[WiFi] === 开始连接 WiFi ===");
+    DBG_PRINTLN("[WiFi] === connect ===");
     String targetSsid = WIFI_SSID;
     String targetPass = WIFI_PWD;
     if (wifi_load_credentials()) {
@@ -125,8 +201,10 @@ bool wifi_connect() {
         DBG_PRINTLN("[WiFi] No saved credentials. Use AP setup.");
         return false;
     }
+    targetSsid.trim();
+    targetPass.trim();
     DBG_PRINTLN("[WiFi] SSID: " + targetSsid);
-    DBG_PRINTLN("[WiFi] PWD:  " + targetPass);
+    // 安全: 绝不在串口日志中输出 WiFi 密码
     DBG_PRINTLN("[WiFi] MAC:  " + WiFi.macAddress());
 
     // 1. 检查是否处于 STA 模式
@@ -136,12 +214,13 @@ bool wifi_connect() {
     WiFi.setTxPower(WIFI_POWER_19_5dBm);
 
     // 2. 扫描看看目标 SSID 在不在
-    DBG_PRINTLN("[WiFi] 扫描附近 WiFi (耗时约 3-5 秒)...");
+    DBG_PRINTLN("[WiFi] scanning...");
     int n = WiFi.scanNetworks();
-    DBG_PRINTLN("[WiFi] 扫描到 " + String(n) + " 个网络:");
+    DBG_PRINTLN("[WiFi] found " + String(n) + " networks:");
     bool found = false;
     for (int i = 0; i < n; i++) {
         String ssid = WiFi.SSID(i);
+        ssid.trim();
         int rssi = WiFi.RSSI(i);
         int channel = WiFi.channel(i);
         wifi_auth_mode_t auth = WiFi.encryptionType(i);
@@ -154,16 +233,16 @@ bool wifi_connect() {
         }
     }
     if (!found) {
-        DBG_PRINTLN("[WiFi] ❌ 没扫到目标 SSID '" + targetSsid + "'");
-        DBG_PRINTLN("[WiFi] 检查清单:");
-        DBG_PRINTLN("  1. SSID 拼写对吗? (大小写敏感)");
-        DBG_PRINTLN("  2. WiFi 是 2.4G 频段吗? (ESP32-S3 不支持 5G)");
-        DBG_PRINTLN("  3. 路由器是否隐藏了 SSID?");
-        DBG_PRINTLN("  4. 路由器是否开启了 MAC 过滤?");
+        DBG_PRINTLN("[WiFi] target SSID not in this scan, still trying direct connect: '" + targetSsid + "'");
+        DBG_PRINTLN("[WiFi] check:");
+        DBG_PRINTLN("  1. SSID case sensitive?");
+        DBG_PRINTLN("  2. 2.4G band? (S3 no 5G)");
+        DBG_PRINTLN("  3. Hidden SSID?");
+        DBG_PRINTLN("  4. MAC filter?");
     }
 
     // 3. 开始连接
-    DBG_PRINTLN("[WiFi] 调用 WiFi.begin()...");
+    DBG_PRINTLN("[WiFi] WiFi.begin()...");
     WiFi.begin(targetSsid.c_str(), targetPass.c_str());
 
     uint32_t t0 = millis();
@@ -172,30 +251,30 @@ bool wifi_connect() {
         delay(300);
         wl_status_t s = WiFi.status();
         if ((int)s != lastStatus) {
-            DBG_PRINTLN("[WiFi] 状态变更 → " + String(wifi_status_str(s)) +
+            DBG_PRINTLN("[WiFi] state -> " + String(wifi_status_str(s)) +
                         " (" + String((millis()-t0)/1000) + "s)");
             lastStatus = (int)s;
         }
     }
 
     wl_status_t finalStatus = WiFi.status();
-    DBG_PRINTLN("[WiFi] 最终状态: " + String(wifi_status_str(finalStatus)));
+    DBG_PRINTLN("[WiFi] final state: " + String(wifi_status_str(finalStatus)));
 
     if (finalStatus == WL_CONNECTED) {
-        DBG_PRINTLN("[WiFi] ✅ 连接成功");
+        DBG_PRINTLN("[WiFi] connected");
         DBG_PRINTLN("[WiFi] IP:       " + WiFi.localIP().toString());
-        DBG_PRINTLN("[WiFi] 网关:     " + WiFi.gatewayIP().toString());
-        DBG_PRINTLN("[WiFi] 子网掩码: " + WiFi.subnetMask().toString());
+        DBG_PRINTLN("[WiFi] gateway:  " + WiFi.gatewayIP().toString());
+        DBG_PRINTLN("[WiFi] mask:     " + WiFi.subnetMask().toString());
         DBG_PRINTLN("[WiFi] DNS:      " + WiFi.dnsIP().toString());
         DBG_PRINTLN("[WiFi] RSSI:     " + String(WiFi.RSSI()) + " dBm");
         return true;
     } else {
-        DBG_PRINTLN("[WiFi] ❌ 连接失败");
-        DBG_PRINTLN("[WiFi] 排查清单:");
-        DBG_PRINTLN("  1. 密码是否正确? (特殊字符/空格)");
-        DBG_PRINTLN("  2. 路由器是否用了 WPA3-only? (ESP32-S3 老固件只支持 WPA2)");
-        DBG_PRINTLN("  3. 路由器是否开启了 802.11ax (WiFi 6) only? 改成 b/g/n mixed");
-        DBG_PRINTLN("  4. 手机热点建议用 2.4G + WPA2-Personal");
+        DBG_PRINTLN("[WiFi] connect failed");
+        DBG_PRINTLN("[WiFi] check:");
+        DBG_PRINTLN("  1. Password correct?");
+        DBG_PRINTLN("  2. WPA3-only? use WPA2");
+        DBG_PRINTLN("  3. 802.11ax only? use b/g/n mixed");
+        DBG_PRINTLN("  4. Use 2.4G + WPA2 hotspot");
         return false;
     }
 }
@@ -222,11 +301,11 @@ void wifi_keep_alive() {
             wifi_start_ap();
         } else {
             reconnectFails++;
-            DBG_PRINTLN("[WiFi] 断线, 尝试重连...");
+            DBG_PRINTLN("[WiFi] lost, reconnecting...");
             WiFi.reconnect();
             if (reconnectFails >= 4) {
                 reconnectFails = 0;
-                DBG_PRINTLN("[WiFi] 多次重连失败, 切换 AP 配网模式");
+                DBG_PRINTLN("[WiFi] reconnect failed, switching to AP");
                 wifi_start_ap();
             }
         }

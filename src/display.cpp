@@ -2,17 +2,10 @@
  * display.cpp - TFT 显示实现 (Adafruit ILI9341 + U8g2 中文)
  */
 #include "display.h"
-#include "cn_font.h"
+#include "ascii_font.h"
 #include <SPI.h>
 
-// TFT 引脚 (与 config.h / platformio.ini 一致)
-#define TFT_CS   15
-#define TFT_DC   16
-#define TFT_RST  14
-#define TFT_SCK  12
-#define TFT_MOSI 11
-
-Adafruit_ILI9341 tft = Adafruit_ILI9341(TFT_CS, TFT_DC, TFT_RST);
+Adafruit_ILI9341 tft = Adafruit_ILI9341(TFT_CS_PIN, TFT_DC_PIN, TFT_RST_PIN);
 
 #define TEXT_TOP_Y      30
 #define TEXT_BOTTOM_Y   (tft.height() - 20)
@@ -21,25 +14,26 @@ Adafruit_ILI9341 tft = Adafruit_ILI9341(TFT_CS, TFT_DC, TFT_RST);
 #define TEXT_SIZE       1
 
 void display_init() {
-    DBG_PRINTLN("[Display] 初始化 Adafruit ILI9341...");
-    DBG_PRINTLN("[Display] 引脚: CS=" + String(TFT_CS) + " DC=" + String(TFT_DC) +
-                " RST=" + String(TFT_RST) + " SCK=" + String(TFT_SCK) + " MOSI=" + String(TFT_MOSI));
+    DBG_PRINTLN("[Display] init Adafruit ILI9341...");
+    DBG_PRINTLN("[Display] pins: CS=" + String(TFT_CS_PIN) + " DC=" + String(TFT_DC_PIN) +
+                " RST=" + String(TFT_RST_PIN) + " SCK=" + String(TFT_SCK_PIN) +
+                " MOSI=" + String(TFT_MOSI_PIN));
 
     // 显式初始化 SPI (Adafruit 库不会自动 begin)
-    DBG_PRINTLN("[Display] 调用 SPI.begin()...");
-    SPI.begin(TFT_SCK, -1, TFT_MOSI, TFT_CS);
+    DBG_PRINTLN("[Display] SPI.begin()...");
+    SPI.begin(TFT_SCK_PIN, -1, TFT_MOSI_PIN, TFT_CS_PIN);
     delay(50);
 
-    DBG_PRINTLN("[Display] 调用 tft.begin()...");
+    DBG_PRINTLN("[Display] tft.begin()...");
     tft.begin();
     delay(10);
 
     tft.setRotation(TFT_ROTATION);
-    DBG_PRINTLN("[Display] 方向: rot=" + String(TFT_ROTATION) +
-                " 尺寸: " + String(tft.width()) + "x" + String(tft.height()));
+    DBG_PRINTLN("[Display] rotation=" + String(TFT_ROTATION) +
+                " size=" + String(tft.width()) + "x" + String(tft.height()));
 
     tft.fillScreen(ILI9341_BLACK);
-    DBG_PRINTLN("[Display] ✅ TFT 初始化完成");
+    DBG_PRINTLN("[Display] TFT init done");
 
     // 初始化中文字体
     cn_font_init();
@@ -184,28 +178,28 @@ void display_splash() {
 }
 
 void display_self_test() {
-    DBG_PRINTLN("[Display] === 屏幕诊断开始 ===");
+    DBG_PRINTLN("[Display] === screen self test ===");
     DBG_PRINTLN("[Display] TFT_ROTATION=" + String(TFT_ROTATION));
 
     int w = tft.width();
     int h = tft.height();
-    DBG_PRINTLN("[Display] 分辨率: " + String(w) + "x" + String(h));
+    DBG_PRINTLN("[Display] resolution: " + String(w) + "x" + String(h));
 
     tft.fillScreen(ILI9341_RED);
-    DBG_PRINTLN("[Display] 阶段1: 红色全屏 (3秒)");
+    DBG_PRINTLN("[Display] stage 1: red (3s)");
     delay(3000);
 
     tft.fillScreen(ILI9341_GREEN);
-    DBG_PRINTLN("[Display] 阶段2: 绿色全屏 (3秒)");
+    DBG_PRINTLN("[Display] stage 2: green (3s)");
     delay(3000);
 
     tft.fillScreen(ILI9341_BLUE);
-    DBG_PRINTLN("[Display] 阶段3: 蓝色全屏 (3秒)");
+    DBG_PRINTLN("[Display] stage 3: blue (3s)");
     delay(3000);
 
     // 阶段 4: 中文测试
     tft.fillScreen(ILI9341_BLACK);
-    DBG_PRINTLN("[Display] 阶段4: 中文显示测试 (5秒)");
+    DBG_PRINTLN("[Display] stage 4: font test (5s)");
 
     display_draw_text(2, 2, "=== TFT Self Test ===", ILI9341_WHITE, 1);
     display_draw_text(2, 18, "Size: " + String(w) + "x" + String(h), ILI9341_WHITE, 1);
@@ -222,6 +216,6 @@ void display_self_test() {
     display_draw_text(2, 200, "Wait 5s -> boot...", ILI9341_GREEN, 1);
 
     delay(5000);
-    DBG_PRINTLN("[Display] === 屏幕诊断结束 ===\n");
+    DBG_PRINTLN("[Display] === self test done ===\n");
     tft.fillScreen(ILI9341_BLACK);
 }

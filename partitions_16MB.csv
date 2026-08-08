@@ -1,11 +1,12 @@
 # ESP32-S3 16MB Flash partition table
-# Board: N16R8 (16MB Flash + 8MB Octal PSRAM)
-# App partition kept large for application code and fonts
+# Board: N16R8 (16MB Quad Flash + 8MB Octal PSRAM)
+# App partition kept at 4MB per slot; LittleFS storage + coredump area
 # Note: esptool only accepts full-line comments starting with #
 
 # Name,    Type, SubType,  Offset,   Size,     Flags
 nvs,       data, nvs,      0x9000,   0x5000,
 otadata,   data, ota,      0xe000,   0x2000,
-app0,      app,  ota_0,    0x10000,  0x700000,
-app1,      app,  ota_1,    0x710000, 0x700000,
-spiffs,    data, spiffs,   0xe10000, 0x1F0000,
+app0,      app,  ota_0,    0x10000,  0x400000,
+app1,      app,  ota_1,    0x410000, 0x400000,
+spiffs,    data, spiffs,   0x810000, 0x7E0000,
+coredump,  data, coredump, 0xFF0000, 0x10000,

@@ -9,6 +9,11 @@
 #include "logger.h"
 
 // ----- TFT 显示 -----
+#define TFT_CS_PIN         15
+#define TFT_DC_PIN         16
+#define TFT_RST_PIN        14
+#define TFT_SCK_PIN        12
+#define TFT_MOSI_PIN       11
 #define TFT_BL_PIN        -1
 #define TFT_ROTATION      1
 
@@ -43,10 +48,46 @@
 #define I2S_IN_SR         16000
 #define I2S_IN_BITS       32
 
+// ----- Cloud TTS -----
+// TTS_MODE 0: ResponsiveVoice free REST GET (no key, currently often 403)
+// TTS_MODE 1: OpenAI-compatible Edge TTS proxy (POST /v1/audio/speech)
+// TTS_MODE 2: Direct Microsoft Edge TTS WebSocket (no key, China-friendly)
+#define TTS_MODE            2
+#define TTS_ENDPOINT        "https://texttospeech.responsivevoice.org/v1/text:synthesize?lang=en&engine=g1&name=&voice=&text="
+#define TTS_ENDPOINT_ZH     "https://texttospeech.responsivevoice.org/v1/text:synthesize?lang=zh-CN&engine=g1&name=&voice=&text="
+#define TTS_API_KEY         ""
+#define TTS_MODEL           "edge-tts"
+#define TTS_VOICE           "zh-CN-XiaoxiaoNeural"
+#define TTS_MAX_TEXT        240
+#define TTS_MAX_AUDIO_BYTES (384 * 1024)
+#define TTS_TIMEOUT_MS      20000
+
 // ----- 板载 RGB LED -----
 #define RGB_LED_PIN       48
 
+// ----- 通断测试仪 (万用表) -----
+// 测试时: GPIO1 输出低电平, GPIO2 内部上拉输入
+#define PROBE_A_PIN       1
+#define PROBE_B_PIN       2
+
+// ----- 电压监测 (ADC) -----
+#define VOLT_SENSE_PIN    10
+#define VOLT_SENSE_SCALE  1.0f
+
+// ----- 语音聊天 (Bcut ASR, 免费免登录) -----
+#define VOICE_RECORD_MS        5000
+#define VOICE_ASR_BASE         "https://member.bilibili.com/x/bcut/rubick-interface"
+#define VOICE_ASR_MODEL_ID     7
+#define VOICE_ASR_TIMEOUT_MS   25000
+
+// ----- OTA 固件升级 -----
+#define OTA_MAX_FW_BYTES         (4 * 1024 * 1024)
+#define OTA_CONNECT_TIMEOUT_MS   15000
+#define OTA_STALL_TIMEOUT_MS     30000
+
 // ----- WiFi 默认值 (生产环境留空, 用配网写入 NVS) -----
+#define WIFI_AP_SSID       "ESP32-AI-Setup"
+#define WIFI_AP_PASSWORD   "12345678"
 #define WIFI_SSID         ""
 #define WIFI_PWD          ""
 #define WIFI_TIMEOUT_MS   20000
@@ -85,10 +126,18 @@
 #define LLM_AGNES_MODEL     "agnes-2.5-flash"
 
 #define LLM_TIMEOUT_MS    30000
+#define LLM_MAX_RESPONSE_BYTES 65536
 #define LLM_MAX_TOKENS    1024
 #define LLM_TEMPERATURE   0.7
 
-#define LLM_SYSTEM_PROMPT "You are an AI assistant on an ESP32-S3 device. Answer briefly in English, keep replies under 150 words, and use plain text without Markdown."
+#define LLM_SYSTEM_PROMPT "You are an AI assistant on an ESP32-S3 device. Answer in Chinese, concise, under 120 words, plain text without Markdown. Format every reply with exactly:\nEN: <one-line English ASCII summary for a small LCD>\nZH: <Chinese full answer>"
+
+// ----- 天气 (Open-Meteo, 免费无 Key) -----
+#define WEATHER_CITY          "Nanchang"
+#define WEATHER_LAT           28.684
+#define WEATHER_LON           115.858
+#define WEATHER_TZ            "Asia/Shanghai"
+#define WEATHER_REFRESH_MS    600000
 
 // ----- UI 颜色 -----
 #define UI_COLOR_BG       ILI9341_BLACK

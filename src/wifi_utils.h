@@ -18,6 +18,12 @@ bool wifi_has_saved_credentials();
 String wifi_get_saved_ssid();
 String wifi_get_ssid_display();
 
+// WiFi 连接历史 (NVS, 不会写入 git)
+void wifi_add_history(const String& ssid, const String& pass);
+int wifi_history_count();
+String wifi_history_ssid(int idx);
+String wifi_history_pass(int idx);
+
 // AP 配置模式
 void wifi_start_ap();
 bool wifi_is_ap_mode();
